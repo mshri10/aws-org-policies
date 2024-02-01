@@ -1,0 +1,56 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+parameters:
+- name: action
+  displayName: Terraform Action
+  type: string
+  default: apply 
+  values:
+  - apply
+  - destroy 
+
+steps:
+
+- task: TerraformInstaller@0
+  displayName: 'terraform install'
+  inputs:
+    terraformVersion: 'v1.2.5'
+
+- task: TerraformTaskV3@3
+  displayName: 'terraform init'
+  inputs:
+    provider: 'aws'
+    command: 'init'
+    backendServiceAWS: 'AWS-SvcConnection-Core'
+    backendAWSBucketName: 'awumaster-tfstate-bucket-01'
+    backendAWSKey: 'organizations_policies/terraform.tfstate'
+
+- task: TerraformTaskV3@3
+  displayName: 'terraform validate'
+  inputs:
+    provider: 'aws'
+    command: 'validate'
+
+- task: TerraformTaskV3@3
+  displayName: 'terraform plan'
+  inputs:
+    provider: 'aws'
+    command: 'plan'
+    commandOptions: '-var-file=env_vars/terraform.tfvars'
+    environmentServiceNameAWS: 'AWS-SvcConnection-Core'
+
+- task: TerraformTaskV3@3
+  displayName: 'terraform ${{ parameters.action }}'
+  inputs:
+    provider: 'aws'
+    command: '${{ parameters.action }}'
+    commandOptions: '-var-file=env_vars/terraform.tfvars --auto-approve'
+    environmentServiceNameAWS: 'AWS-SvcConnection-Core'

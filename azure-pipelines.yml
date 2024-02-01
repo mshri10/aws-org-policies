@@ -1,0 +1,158 @@
+trigger: none
+
+pool: AZUP-ADOA-VMSS-01
+
+resources:
+  repositories:
+    - repository: tf-pipeline-templates
+      type: git
+      name: Cloud-Engineering/tf-pipeline-templates
+      ref: refs/heads/fix/cert-pw-testing
+
+parameters:
+  - name    : environments
+    type    : object
+    default : ['master']
+
+  - name        : deployOverride
+    displayName : Deploy Override
+    type        : boolean
+    default     : false
+
+  - name        : debug
+    displayName : Enable Debugging
+    type        : boolean
+    default     : false
+
+variables:
+  - template: pipeline-variables/global.yml
+
+  - name  : isDeployable
+    value : $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+
+  - ${{ if eq(parameters['debug'], 'true') }}:
+    - name  : System.Debug
+      value : true
+
+stages:
+
+  ########################################
+  # Run check on updated docs
+  ########################################
+  - stage: docs
+    displayName: Docs Check
+    dependsOn: []
+    jobs:
+    - template: tf/docs-check.yml@tf-pipeline-templates
+  
+  ########################################
+  # Run repo-wide security checks
+  ########################################
+  - stage: repoSecurityScan
+    displayName: Repo Security Scans
+    dependsOn: []
+    jobs:
+    - template: tf/repo-sec-scan.yml@tf-pipeline-templates
+  
+  ########################################
+  #
+  # Run Scan+Plan and Apply stages for all defined environments 
+  #
+  ########################################
+  - ${{ each env in parameters.environments }}:
+    - stage       : CI_${{ env }}
+      displayName : "${{ env }} - Scan+Plan"
+      dependsOn   : [ 'repoSecurityScan' ]
+
+      variables:
+        - template: pipeline-variables/${{ env }}.yml
+
+      jobs:
+        ########################################
+        # Run preflight checks 
+        ########################################
+        - template  : tf/preflight-checks.yml@tf-pipeline-templates
+          parameters: 
+            env: ${{ env }}
+
+        ########################################
+        # Run Environment Specific Security Scans
+        ########################################
+        - template  : tf/env-sec-scan.yml@tf-pipeline-templates
+          parameters: 
+            dependsOn             : [ 'preflightChecks_${{ env }}' ]
+
+            provider              : aws
+            serviceConnection     : ${{ variables.serviceConnection }}
+            env                   : ${{ env }}
+            
+            varFilePath           : ${{ variables.varFilePath }}
+            backendAWSBucketName  : ${{ variables.backendAWSBucketName }}
+            backendAWSKey         : ${{ variables.backendAWSKey }}
+
+        ########################################
+        # Run terraform plan
+        ########################################
+        - template  : tf/tf-plan.yml@tf-pipeline-templates
+          parameters: 
+            dependsOn             : [ 'preflightChecks_${{ env }}' ]
+            
+            provider              : aws
+            serviceConnection     : ${{ variables.serviceConnection }}
+            env                   : ${{ env }}
+            #destory               : ${{ parameters.destory }}
+            
+            varFilePath           : ${{ variables.varFilePath }}
+            backendAWSBucketName  : ${{ variables.backendAWSBucketName }}
+            backendAWSKey         : ${{ variables.backendAWSKey }}
+
+    ########################################
+    #
+    # CD Stage, conditional on deployOverride
+    #
+    ########################################
+    - ${{ if eq(parameters['deployOverride'], 'true') }}: # Override for stage condition
+      - stage       : CD_${{ env }}
+        dependsOn   : CI_${{ env }}
+        displayName : "${{ env }} - Apply"
+        condition   : always()
+        
+        variables:
+          - template: pipeline-variables/${{ env }}.yml
+
+        jobs:
+          ########################################
+          # Run terraform apply
+          ########################################
+          - template  : tf/tf-deploy.yml@tf-pipeline-templates
+            parameters: 
+              
+              provider              : aws
+              serviceConnection     : ${{ variables.serviceConnection }}
+              env                   : ${{ env }}
+              varFilePath           : ${{ variables.varFilePath }}
+              backendAWSBucketName  : ${{ variables.backendAWSBucketName }}
+              backendAWSKey         : ${{ variables.backendAWSKey }}
+    
+    - ${{ else }}:
+      - stage       : CD_${{ env }}
+        dependsOn   : CI_${{ env }}
+        displayName : "${{ env }} - Apply"
+        condition : eq(variables['isDeployable'], 'true')
+        
+        variables:
+          - template: pipeline-variables/${{ env }}.yml
+
+        jobs:
+          ########################################
+          # Run terraform apply
+          ########################################
+          - template  : tf/tf-deploy.yml@tf-pipeline-templates
+            parameters: 
+              
+              provider              : aws
+              serviceConnection     : ${{ variables.serviceConnection }}
+              env                   : ${{ env }}
+              varFilePath           : ${{ variables.varFilePath }}
+              backendAWSBucketName  : ${{ variables.backendAWSBucketName }}
+              backendAWSKey         : ${{ variables.backendAWSKey }}

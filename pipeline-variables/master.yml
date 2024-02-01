@@ -1,0 +1,9 @@
+variables:
+  environment: master
+  
+  serviceConnection : 'AWS-SvcConnection-Core'
+  varFilePath       : 'tfvars/org_policy.tfvars'
+
+  # Backend Configuration:
+  backendAWSBucketName: 'awumaster-tfstate-bucket-01'
+  backendAWSKey       : 'organizations_policies/terraform.tfstate'
